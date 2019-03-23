@@ -1,15 +1,16 @@
 package com.tiramisu.domain.builder;
 
-import com.tiramisu.domain.TestClassBuilder;
-import com.tiramisu.domain.test.TestClass;
-import org.hamcrest.Matchers;
+import com.tiramisu.domain.SubBuilder;
+import com.tiramisu.domain.objects.Sub;
 import org.junit.Test;
 
 import java.time.Instant;
 import java.util.Date;
 import java.util.List;
 
+import static java.util.Collections.singletonList;
 import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.is;
 
 
 public class BuilderTest {
@@ -17,24 +18,30 @@ public class BuilderTest {
   @Test
   public void TestClassBuilderShouldBuildCorrectObject() {
     // given
-    List list = null;
-    String here = "not really here";
-    String there = "not there either";
+    List list = singletonList("sup my dude");
+    String hereInSub = "not really here";
+    String thereInSub = "not there either";
+    String hereInBase = hereInSub + thereInSub;
+    Integer thereInBase = 15;
     Date date = Date.from(Instant.ofEpochMilli(5L));
 
     // when
-    TestClass testClass = TestClassBuilder.create()
-        .withTestList(list)
-        .withHere(here)
-        .withThere(there)
-        .withDate(date)
+    Sub sub = SubBuilder.create()
+        .with(list)
+        .withHereInSub(hereInSub)
+        .withHereInBase(hereInBase)
+        .withThereInSub(thereInSub)
+        .with(thereInBase)
+        .with(date)
         .build();
 
     // then
-    assertThat(testClass.getTestList(), Matchers.is(list));
-    assertThat(testClass.getHere(), Matchers.is(here));
-    assertThat(testClass.getThere(), Matchers.is(there));
-    assertThat(testClass.getDate(), Matchers.is(date));
+    assertThat(sub.getList(), is(list));
+    assertThat(sub.getHere(), is(hereInSub));
+    assertThat(sub.getHereInBase(), is(hereInBase));
+    assertThat(sub.getThere(), is(thereInSub));
+    assertThat(sub.getThereInBase(), is(thereInBase));
+    assertThat(sub.getDate(), is(date));
   }
 
 }
