@@ -1,6 +1,8 @@
 package com.tiramisu.domain.builder.generator;
 
+import com.tiramisu.domain.SomeFieldClassBuilder;
 import com.tiramisu.domain.objects.DoubleSub;
+import com.tiramisu.domain.objects.SomeFieldClass;
 import com.tiramisu.domain.objects.TripleSub;
 
 import java.io.File;
@@ -21,35 +23,20 @@ import static java.util.Arrays.asList;
  * hierarchy that are not public, they will be ignored). Another limitation of this class is generics; due to type
  * erasure, only setters for raw types will be generated, you'll have to generify manually.
  */
+@SuppressWarnings({"ArraysAsListWithZeroOrOneArgument", "FieldCanBeLocal"})
 public final class BuilderGenerator {
 
   private BuilderGenerator() {}
 
   /*-
    * HowTo:
-   *      0. Set TARGET_CLASS to the class you want to generate a builder for
-   *      1. Set BUILDER_PACKAGE to the package where you will put the java builder class
-   *      2. Set builderClassName to the name of your java builder class (should end with "Builder")
-   *      3. Set DEFAULT_CONSTRUCTOR_OF_TARGET_CLASS_IS_ACCESSIBLE to the appropriate value
-   *      4. Set BUILDER_SHOULD_ONLY_SET_FIELDS_THAT_BUILDER_METHOD_WAS_CALLED_FOR to the appropriate value, see javadoc
-   *      5. Set IGNORE_FIELD_NAME_FOR_FIRST_BUILDER_METHOD_PER_RETURN_TYPE to true if the first builder method that
-   *         is generated per return type should only be called "with(..)" instead of "with<FieldName>(..)"
-   *      6. Have getters in TARGET_CLASS for all fields you want builder methods for; e.g. use @Getter on
-   *         TARGET_CLASS, only necessary during execution of the TestBuilderGenerator, can be removed again after
-   *      7. Execute this class (Run As -> Java Application),
-   *      8. A class will be generated in the top directory, move it to your location
-   *      9. Add your new builder class to DomainBuilder.java
-   *     10. Make final adjustments to new builder
-   *          * e.g.some fields may need non-null default values
-   *          * or some with-methods should have slightly different behavior, e.g. withElements(Collection<> X) may
-   *            want to add all elements to an existing collection instead of replacing it, if X is not null
-   *          * or maybe there were get-methods for fields that don't exist in TARGET_CLASS that you want
-   *            to delete the with<field>-methods for
-   *          * or some fields are generics that will have raw-type with<field>-methods generated for them -> generify
+   *      1. Set the fields in the configuration section below
+   *      2. Execute the main method of this class
+   *      3. A class will be generated in the root directory of the project, copy it to the package where you need it
    */
 
   /* ---------------------------------------------------------------------------------------------------------------- */
-  /* ------------------------------------------------- configuration ------------------------------------------------ */
+  /*                                                   configuration                                                  */
   /* ---------------------------------------------------------------------------------------------------------------- */
 
   /** Class for which you want a builder to be generated. */
@@ -62,17 +49,35 @@ public final class BuilderGenerator {
 
   /** Add the classes in the type hierarchy between {@link #TARGET_CLASS} and {@link #UPPER_BOUND_OF_HIERARCHY} that
    * you do not want setter methods for in this set. */
-  @SuppressWarnings("ArraysAsListWithZeroOrOneArgument")
   private HashSet<Class<?>> IGNORED_CLASSES_IN_HIERARCHY = new HashSet<>(
       asList(
           DoubleSub.class
       )
   );
 
-  /** Constructors may initialize fields to non-null values (or non-default for primitives). To make sure the
-   * builder doesn't override that, set this to true if you want the builder to only set the fields that a
-   * {@code with<field>}-method was called for. */
-  private boolean BUILDER_SHOULD_ONLY_SET_FIELDS_THAT_BUILDER_METHOD_WAS_CALLED_FOR = true;
+  /** If you already have some builder classes (i.e. classes with a {@code build()} instance-method (not a static
+   *  one) that returns a class instance for some of the classes for which
+   *  {@value #SETTER_METHOD_NAME_PREFIX}{@code <fieldName>(instance)}-methods will be generated, then you can add
+   *  the classes and their builder-classes to this map and the generator will additionally generate
+   *  {@value #SETTER_METHOD_NAME_PREFIX}{@code <fieldName>(builderInstance)}-methods.<br /><br />
+   *
+   *  <b>Example:</b> if there's a field of type {@code Spaghetti} and you have a {@code SpaghettiBuilder}, then add
+   *  {@code put(Spaghetti.class, SpaghettiBuilder.class)} to this map so you get both a
+   *  {@value #SETTER_METHOD_NAME_PREFIX}{@code <fieldName>(Spaghetti)}
+   *  and a
+   *  {@value #SETTER_METHOD_NAME_PREFIX}{@code <fieldName>(SpaghettiBuilder)}
+   *  method. */
+  private HashMap<Class<?>, Class<?>> FIELD_TYPES_TO_EXISTING_BUILDER_CLASSES = new HashMap<Class<?>, Class<?>>() {
+    { // initialize the anonymous map in an initializer block
+      put(SomeFieldClass.class, SomeFieldClassBuilder.class);
+    }
+  };
+
+  /** Constructors may initialize fields to non-null values (or non-default for primitives), or you may want to use
+   *  the builder by starting {@link #startingFromInstanceMethod() building from an existing instance}. To make sure the
+   *  builder doesn't override that, set this to true if you want the builder to only set the fields that a
+   * {@value #SETTER_METHOD_NAME_PREFIX}{@code <fieldName>}-method was called for. */
+  private boolean ONLY_OVERWRITE_FIELDS_THAT_BUILDER_METHOD_WAS_CALLED_FOR = true;
 
   /** If a field type is unique among all fields that {@value #SETTER_METHOD_NAME_PREFIX}{@code <fieldName>(fieldType)}
    * -methods are generated for and you want those field types to have their methods just called
@@ -86,14 +91,12 @@ public final class BuilderGenerator {
    *
    * @see #SETTER_METHOD_NAME_PREFIX set the "with" prefix
    */
-  @SuppressWarnings("FieldCanBeLocal")
   private boolean OMIT_FIELD_NAME_IN_SETTER_METHOD_NAME_FOR_UNIQUE_FIELD_TYPES = true;
 
   private boolean DEFAULT_CONSTRUCTOR_OF_TARGET_CLASS_IS_ACCESSIBLE = true;
 
   /** If this is {@code true} and a file at the location where the builder will be generated already exists, then it
    * will be overwritten silently. If this is {@code false}, the program exits without changing the file. */
-  @SuppressWarnings("FieldCanBeLocal")
   private boolean ALLOW_FILE_OVERWRITING = true;
 
   /** Prefix for the names of the methods that set fields in the generated object.
@@ -102,10 +105,10 @@ public final class BuilderGenerator {
   private String SETTER_METHOD_NAME_PREFIX = "with";
 
   /* ---------------------------------------------------------------------------------------------------------------- */
-  /* ----------------------------------------------- generating code ------------------------------------------------ */
+  /*                                                 generating code                                                  */
   /* ---------------------------------------------------------------------------------------------------------------- */
   private String targetClassName = TARGET_CLASS.getSimpleName();
-  private String resultFieldName = lowercase(TARGET_CLASS.getSimpleName());
+  private String resultFieldName = "_result_" + lowercase(TARGET_CLASS.getSimpleName());
 
   private String builderClassName = TARGET_CLASS.getSimpleName() + "Builder";
 
@@ -149,18 +152,19 @@ public final class BuilderGenerator {
   private void generateBuilderClass() {
     initializeFieldInfo();
 
-    generatePackageStatement();
-    generateImports();
-    generateClassHeader();
-    generateBuilderConstructor();
-    generateFields();
-    generateFieldsToSet();
-    generateCreateBuilderMethod();
-    generateWithFieldMethods();
-    generateClearFieldsMethod();
-    generateDefaultValuesMethod();
-    generateBuildMethod();
-    generateSetFieldMethod();
+    packageStatement();
+    imports();
+    classHeader();
+    builderConstructor();
+    builderFields();
+    fieldsToSet();
+    createBuilderMethod();
+    withFieldMethods();
+    clearFieldsMethod();
+    defaultValuesMethod();
+    startingFromInstanceMethod();
+    buildMethod();
+    setFieldMethod();
     endClass();
   }
 
@@ -225,16 +229,16 @@ public final class BuilderGenerator {
   }
 
   /* ---------------------------------------------------------------------------------------------------------------- */
-  /*                                             generatePackageStatement                                             */
+  /*                                                 packageStatement                                                 */
   /* ---------------------------------------------------------------------------------------------------------------- */
-  private void generatePackageStatement() {
+  private void packageStatement() {
     stream.println(TARGET_CLASS.getPackage().toString() + ";");
   }
 
   /* ---------------------------------------------------------------------------------------------------------------- */
-  /*                                                 generateImports                                                  */
+  /*                                                     imports                                                      */
   /* ---------------------------------------------------------------------------------------------------------------- */
-  private void generateImports() {
+  private void imports() {
     Set<Class<?>> alreadyImportedClasses = new HashSet<>();
 
     addImportIfMissing(Field.class, alreadyImportedClasses);
@@ -243,7 +247,7 @@ public final class BuilderGenerator {
       addImportIfMissing(InvocationTargetException.class, alreadyImportedClasses);
     }
 
-    if (BUILDER_SHOULD_ONLY_SET_FIELDS_THAT_BUILDER_METHOD_WAS_CALLED_FOR) {
+    if (ONLY_OVERWRITE_FIELDS_THAT_BUILDER_METHOD_WAS_CALLED_FOR) {
       addImportIfMissing(HashSet.class, alreadyImportedClasses);
       addImportIfMissing(Set.class, alreadyImportedClasses);
     }
@@ -264,27 +268,27 @@ public final class BuilderGenerator {
   }
 
   /* ---------------------------------------------------------------------------------------------------------------- */
-  /*                                                generateClassHeader                                               */
+  /*                                                    classHeader                                                   */
   /* ---------------------------------------------------------------------------------------------------------------- */
-  private void generateClassHeader() {
-    stream.println("@SuppressWarnings({\"unused\", \"UnusedReturnValue\", \"WeakerAccess\"})");
+  private void classHeader() {
+    stream.println("@SuppressWarnings({\"unused\", \"UnusedReturnValue\", \"WeakerAccess\", \"SameParameterValue\"})");
     stream.println("public final class " + builderClassName + " {");
     stream.println();
   }
 
   /* ---------------------------------------------------------------------------------------------------------------- */
-  /*                                             generateBuilderConstructor                                           */
+  /*                                                 builderConstructor                                               */
   /* ---------------------------------------------------------------------------------------------------------------- */
-  private void generateBuilderConstructor() {
+  private void builderConstructor() {
     stream.println("  /** This is a utility class. */");
     stream.println("  private " + builderClassName + "() {}");
     stream.println();
   }
 
   /* ---------------------------------------------------------------------------------------------------------------- */
-  /*                                                  generateFields                                                  */
+  /*                                                  builderFields                                                   */
   /* ---------------------------------------------------------------------------------------------------------------- */
-  private void generateFields() {
+  private void builderFields() {
     stream.println("  private " + targetClassName + " " + resultFieldName + " = new " + targetClassName + "();");
     fields.forEach(field ->
         stream.println("  private " + field.getType().getSimpleName() + " " + fieldToBuilderFieldName.get(field) + ";")
@@ -293,19 +297,19 @@ public final class BuilderGenerator {
   }
 
   /* ---------------------------------------------------------------------------------------------------------------- */
-  /*                                                generateFieldsToSet                                               */
+  /*                                                    fieldsToSet                                                   */
   /* ---------------------------------------------------------------------------------------------------------------- */
-  private void generateFieldsToSet() {
-    if (BUILDER_SHOULD_ONLY_SET_FIELDS_THAT_BUILDER_METHOD_WAS_CALLED_FOR) {
+  private void fieldsToSet() {
+    if (ONLY_OVERWRITE_FIELDS_THAT_BUILDER_METHOD_WAS_CALLED_FOR) {
       stream.println("  private Set<String> fieldsToSet = new HashSet<>();");
       stream.println();
     }
   }
 
   /* ---------------------------------------------------------------------------------------------------------------- */
-  /*                                            generateCreateBuilderMethod                                           */
+  /*                                                createBuilderMethod                                               */
   /* ---------------------------------------------------------------------------------------------------------------- */
-  private void generateCreateBuilderMethod() {
+  private void createBuilderMethod() {
     stream.println("  public static " + builderClassName + " create() {");
     stream.println("    return new " + builderClassName + "();");
     stream.println("  }");
@@ -313,29 +317,52 @@ public final class BuilderGenerator {
   }
 
   /* ---------------------------------------------------------------------------------------------------------------- */
-  /*                                             generateWithFieldMethods                                             */
+  /*                                                 withFieldMethods                                                 */
   /* ---------------------------------------------------------------------------------------------------------------- */
-  private void generateWithFieldMethods() {
+  private void withFieldMethods() {
     for (Field field: fields) {
       stream.println("  /** {@link " + field.getDeclaringClass().getSimpleName() + "#" + field.getName() + "}. */");
       stream.println("  public " + builderClassName + " " + fieldToSetterMethodName.get(field)
                                  + "(" + field.getType().getSimpleName() + " " + fieldToBuilderFieldName.get(field) + ") {");
       stream.println("    this." + fieldToBuilderFieldName.get(field) + " = " + fieldToBuilderFieldName.get(field) + ";");
-      if (BUILDER_SHOULD_ONLY_SET_FIELDS_THAT_BUILDER_METHOD_WAS_CALLED_FOR) {
+
+      if (ONLY_OVERWRITE_FIELDS_THAT_BUILDER_METHOD_WAS_CALLED_FOR) {
         stream.println("    fieldsToSet.add(\"" + fieldToBuilderFieldName.get(field) + "\");");
       }
+
       stream.println("    return this;");
       stream.println("  }");
       stream.println();
+
+      if (FIELD_TYPES_TO_EXISTING_BUILDER_CLASSES.containsKey(field.getType())) {
+        Class<?> builderClass = FIELD_TYPES_TO_EXISTING_BUILDER_CLASSES.get(field.getType());
+
+        stream.println("  /** {@link " + field.getDeclaringClass().getSimpleName() + "#" + field.getName() + "}. */");
+        stream.println("  public " + builderClassName + " " + fieldToSetterMethodName.get(field)
+            + "(" + builderClass.getSimpleName() + " " + fieldToBuilderFieldName.get(field) + "Builder) {");
+        stream.println("    this." + fieldToBuilderFieldName.get(field)
+                                   + " = " + fieldToBuilderFieldName.get(field) + "Builder.build();");
+
+        if (ONLY_OVERWRITE_FIELDS_THAT_BUILDER_METHOD_WAS_CALLED_FOR) {
+          stream.println("    fieldsToSet.add(\"" + fieldToBuilderFieldName.get(field) + "\");");
+        }
+
+        stream.println("    return this;");
+        stream.println("  }");
+        stream.println();
+      }
     }
   }
 
   /* ---------------------------------------------------------------------------------------------------------------- */
-  /*                                             generateClearFieldsMethod                                            */
+  /*                                                 clearFieldsMethod                                                */
   /* ---------------------------------------------------------------------------------------------------------------- */
-
-  private void generateClearFieldsMethod() {
-    stream.println("  /** Sets all field to the default value the JVM initializes for the respective types. */");
+  private void clearFieldsMethod() {
+    stream.println("  /**");
+    stream.println("    * Sets all fields to the default value that the");
+    stream.println("    * <a href=\"https://docs.oracle.com/javase/specs/jvms/se8/jvms8.pdf\">JVM specification</a>");
+    stream.println("    * defines in sections 2.3 and 2.4.");
+    stream.println("    */");
     stream.println("  public void clear() {");
     fields.forEach(field ->
         stream.println("    " + fieldToSetterMethodName.get(field) + "(" + clearedValueForField(field) + ");")
@@ -348,17 +375,18 @@ public final class BuilderGenerator {
     Class<?> type = field.getType();
 
     if (type.isPrimitive()) {
-      if (type.equals(int.class)) return "0";
-      if (type.equals(long.class)) return "0L";
-      if (type.equals(short.class)) return "(short) 0";
-      if (type.equals(byte.class)) return "(byte) 0";
-      if (type.equals(float.class)) return "0.0f";
-      if (type.equals(double.class)) return "0.0";
-      if (type.equals(char.class)) return "'\\u0000'";
       if (type.equals(boolean.class)) return "false";
+      if (type.equals(byte.class))    return "(byte) 0";
+      if (type.equals(short.class))   return "(short) 0";
+      if (type.equals(int.class))     return "0";
+      if (type.equals(long.class))    return "0L";
+      if (type.equals(char.class))    return "'\\u0000'";
+      if (type.equals(float.class))   return "0.0f";
+      if (type.equals(double.class))  return "0.0";
     }
 
-    if (fieldToSetterMethodName.get(field).equals(SETTER_METHOD_NAME_PREFIX)) {
+    if (fieldToSetterMethodName.get(field).equals(SETTER_METHOD_NAME_PREFIX)
+        || FIELD_TYPES_TO_EXISTING_BUILDER_CLASSES.containsKey(field.getType())) {
       return "(" + field.getType().getSimpleName() + ") null";
     } else {
       return "null";
@@ -366,27 +394,44 @@ public final class BuilderGenerator {
   }
 
   /* ---------------------------------------------------------------------------------------------------------------- */
-  /*                                            generateDefaultValuesMethod                                           */
+  /*                                                defaultValuesMethod                                               */
   /* ---------------------------------------------------------------------------------------------------------------- */
-
-  private void generateDefaultValuesMethod() {
+  private void defaultValuesMethod() {
     stream.println("  /**");
-    stream.println("    * Sets all fields to default values predefined in the builder.");
+    stream.println("    * Sets all fields to default values predefined in the builder.<br /><br />");
+    stream.println("    * <b>NOTE:</b> all calls to the builder before this method is called will have no effect.");
     stream.println("    * TODO implement default values!");
     stream.println("    */");
     stream.println("  public void _" + SETTER_METHOD_NAME_PREFIX + "Defaults() {");
-    stream.println("    fieldsToSet.clear();");
     fields.forEach(field ->
-        stream.println("    // " + fieldToSetterMethodName.get(field) + "(TODO implement me!);")
+        stream.println("    " + fieldToSetterMethodName.get(field)
+                              + "(" + fieldToBuilderFieldName.get(field) + "); // TODO implement me!")
     );
     stream.println("  }");
     stream.println();
   }
 
   /* ---------------------------------------------------------------------------------------------------------------- */
-  /*                                                generateBuildMethod                                               */
+  /*                                            startingFromInstanceMethod                                            */
   /* ---------------------------------------------------------------------------------------------------------------- */
-  private void generateBuildMethod() {
+  private void startingFromInstanceMethod() {
+    stream.println("  /**");
+    stream.println("    * Allows to start building from an existing instance. If the instance you pass to this is");
+    stream.println("    * {@code null}, the call to this method will be ignored.");
+    stream.println("    */");
+    stream.println("  public void startingFrom(" + targetClassName + " instance) {");
+    stream.println("    if (instance != null) {");
+    stream.println("      clear();");
+    stream.println("      " + resultFieldName + " = instance;");
+    stream.println("    }");
+    stream.println("  }");
+    stream.println();
+  }
+
+  /* ---------------------------------------------------------------------------------------------------------------- */
+  /*                                                    buildMethod                                                   */
+  /* ---------------------------------------------------------------------------------------------------------------- */
+  private void buildMethod() {
     if(DEFAULT_CONSTRUCTOR_OF_TARGET_CLASS_IS_ACCESSIBLE) {
       generateSimpleBuildMethodStart();
     } else {
@@ -417,19 +462,19 @@ public final class BuilderGenerator {
     String builderFieldName = fieldToBuilderFieldName.get(field);
     String fieldClass = field.getDeclaringClass().getSimpleName() + ".class";
 
-    if (BUILDER_SHOULD_ONLY_SET_FIELDS_THAT_BUILDER_METHOD_WAS_CALLED_FOR) {
+    if (ONLY_OVERWRITE_FIELDS_THAT_BUILDER_METHOD_WAS_CALLED_FOR) {
       stream.println("    if(fieldsToSet.contains(\"" + builderFieldName + "\")) {");
       stream.println("       setField(\"" + field.getName() + "\", " + fieldClass + ", " + builderFieldName + ");");
       stream.println("    }");
     } else {
-      stream.println("    setField(" + builderFieldName + ");");
+      stream.println("    setField(\"" + field.getName() + "\", " + fieldClass + ", " + builderFieldName + ");");
     }
   }
 
   /* ---------------------------------------------------------------------------------------------------------------- */
-  /*                                              generateSetFieldMethod                                              */
+  /*                                                  setFieldMethod                                                  */
   /* ---------------------------------------------------------------------------------------------------------------- */
-  private void generateSetFieldMethod() {
+  private void setFieldMethod() {
     stream.println("  private void setField(String fieldName, Class<?> type, Object fieldValue) {");
     stream.println("    try {");
     stream.println("      Field objectField = type.getDeclaredField(fieldName);");

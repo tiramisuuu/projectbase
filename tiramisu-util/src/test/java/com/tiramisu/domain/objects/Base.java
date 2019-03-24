@@ -12,6 +12,8 @@ public class Base {
 
   private int hi;
 
+  private SomeFieldClass fieldWithBuilder;
+
   public Date getDateInBase() {
     return date;
   }

@@ -12,7 +12,6 @@ import static java.util.Collections.singletonList;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.is;
 
-
 public class BuilderTest {
 
   @Test
@@ -41,7 +40,7 @@ public class BuilderTest {
     assertThat(sub.getHereInBase(), is(hereInBase));
     assertThat(sub.getThere(), is(thereInSub));
     assertThat(sub.getThereInBase(), is(thereInBase));
-    assertThat(sub.getDate(), is(date));
+    assertThat(sub.getDateInBase(), is(date));
   }
 
 }
